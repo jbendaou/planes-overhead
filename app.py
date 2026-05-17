@@ -4,6 +4,31 @@ import math
 import requests
 from flask import Flask, jsonify, render_template_string, request
 
+
+import csv as _csv
+import os as _os
+_AIRPORTS = {}
+def _load_airports():
+    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "airports.csv")
+    if not _os.path.exists(path):
+        return
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            try:
+                rec = {
+                    "iata": row["iata"], "icao": row["icao"],
+                    "name": row["name"], "city": row["city"],
+                    "country": row["country"],
+                    "lat": float(row["lat"]), "lon": float(row["lon"]),
+                }
+            except (KeyError, ValueError):
+                continue
+            if rec["iata"]:
+                _AIRPORTS[rec["iata"].upper()] = rec
+            if rec["icao"]:
+                _AIRPORTS[rec["icao"].upper()] = rec
+_load_airports()
+
 app = Flask(__name__)
 
 ADSBLOL_URL = "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}"
@@ -269,15 +294,17 @@ def planes():
 def fetch_airport_by_code(code):
     if not code:
         return None
-    try:
-        r = requests.get(f"https://api.adsbdb.com/v0/airport/{code}",
-                         headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        resp = r.json().get("response") or {}
-        return resp.get("airport") or resp
-    except requests.RequestException:
+    rec = _AIRPORTS.get(code.upper())
+    if not rec:
         return None
+    return {
+        "latitude": rec["lat"],
+        "longitude": rec["lon"],
+        "iata_code": rec["iata"],
+        "icao_code": rec["icao"],
+        "name": rec["name"],
+        "municipality": rec["city"],
+    }
 
 
 @app.route("/api/airport/<code>")
