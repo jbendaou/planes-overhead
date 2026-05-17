@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template_string, request
 import csv as _csv
 import os as _os
 _AIRPORTS = {}
+_AIRPORT_LIST = []
 def _load_airports():
     path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "airports.csv")
     if not _os.path.exists(path):
@@ -23,6 +24,7 @@ def _load_airports():
                 }
             except (KeyError, ValueError):
                 continue
+            _AIRPORT_LIST.append(rec)
             if rec["iata"]:
                 _AIRPORTS[rec["iata"].upper()] = rec
             if rec["icao"]:
@@ -184,7 +186,8 @@ html,body{height:100%;background:#0a0a0a;color:#fff;font-family:'VT323',monospac
 .board::after{content:'';position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(0,0,0,0) 50%,rgba(0,0,0,.18) 50%);background-size:100% 3px;z-index:3;mix-blend-mode:multiply}
 @media (max-width:720px){.board{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;padding:20px;gap:14px}.board-frame{aspect-ratio:auto;height:auto}.line{font-size:clamp(22px,7vw,40px)}}
 </style></head><body>
-<div class="status-bar"><span class="dot"></span><span id="status">LOCATING...</span></div>
+<div class="nearest-airport" id="nearest-airport">NEAREST: ---</div>
+  <div class="status-bar"><span class="dot"></span><span id="status">LOCATING...</span></div>
 <div class="controls">
 <span class="ctl-group"><label>ZIP</label><input id="zip-input" type="text" maxlength="5" inputmode="numeric" placeholder="20431"><button id="zip-go" class="btn">GO</button><button id="use-location" class="btn">USE MY LOCATION</button></span>
     <span class="ctl-group">
@@ -216,9 +219,21 @@ function formatEta(m){if(m==null)return '-';if(m<60)return `${m}m`;return `${Mat
 function clearBoard(msg){logoSlot.innerHTML='<div class="placeholder">PLANE</div>';set('airline-name',msg||'AWAITING');set('callsign','---');set('aircraft-type','---');set('route-codes','---');set('origin-city','---');set('destination-city','---');set('stat-alt','-');set('stat-spd','-');set('stat-dist','-');set('stat-eta','-')}
 function renderPlane(p,n){renderLogo(p.airline);set('airline-name',(p.airline?.name||p.airline?.icao||'UNKNOWN').toUpperCase());set('callsign',(p.callsign||p.icao24||'---').toUpperCase());set('aircraft-type',(p.aircraft_icao||'---').toUpperCase());const o=p.origin,d=p.destination,code=c=>c?(c.iata||c.icao||'-'):'-';set('route-codes',`${code(o)}-${code(d)}`);set('origin-city',(o?.city||o?.name||'UNKNOWN ORIGIN').toUpperCase());set('destination-city',(d?.city||d?.name||'UNKNOWN DEST').toUpperCase());set('stat-alt',`${p.altitude_ft.toLocaleString()} FT`);set('stat-spd',`${p.speed_kts} KTS`);set('stat-dist',fmtDist(p.distance_km));set('stat-eta',formatEta(p.eta_minutes));setStatus(`${n} AIRCRAFT - CLOSEST ${fmtDist(p.distance_km)}`)}
 async function tick(){if(userLat==null)return;const r=radiusEl.value||75;try{const res=await fetch(`/api/planes?lat=${userLat}&lon=${userLon}&radius=${r}`);const data=await res.json();if(!res.ok){setStatus(data.error||`ERROR ${res.status}`);return}if(data.empty){setStatus(`NO PLANES WITHIN ${fmtDist(data.radius_km)}`);clearBoard('NO PLANES');return}renderPlane(data.plane,data.nearby_count)}catch(e){setStatus('NETWORK ERROR')}}
+async function fetchClosestAirport(lat, lon) {
+  try {
+    const r = await fetch(`/api/closest-airport?lat=${lat}&lon=${lon}`);
+    if (!r.ok) return;
+    const a = await r.json();
+    const code = a.iata || a.icao || '';
+    const name = (a.city || a.name || '').toUpperCase();
+    document.getElementById('nearest-airport').textContent =
+      `NEAREST AIRPORT: ${code} - ${name} (${a.distance_km} KM)`;
+  } catch (e) {}
+}
+
 function startPolling(){if(timer)clearInterval(timer);tick();timer=setInterval(tick,REFRESH_MS)}
-function useBrowserLocation(){if(!navigator.geolocation){setStatus('GEOLOCATION UNSUPPORTED');return}setStatus('LOCATING...');navigator.geolocation.getCurrentPosition(p=>{userLat=p.coords.latitude;userLon=p.coords.longitude;setStatus(`WATCHING ${userLat.toFixed(2)}, ${userLon.toFixed(2)}`);startPolling()},e=>setStatus('LOCATION DENIED - TRY ZIP'),{enableHighAccuracy:false,timeout:10000,maximumAge:60000})}
-async function useZip(z){z=String(z||'').trim();if(!/^\d{5}$/.test(z)){setStatus('ENTER A 5-DIGIT ZIP');return}setStatus(`LOOKING UP ${z}...`);try{const r=await fetch(`https://api.zippopotam.us/us/${z}`);if(!r.ok){setStatus('ZIP NOT FOUND');return}const d=await r.json();const pl=d.places?.[0];if(!pl){setStatus('ZIP NOT FOUND');return}userLat=parseFloat(pl.latitude);userLon=parseFloat(pl.longitude);setStatus(`WATCHING ${pl['place name'].toUpperCase()} ${z}`);startPolling()}catch(e){setStatus('ZIP LOOKUP FAILED')}}
+function useBrowserLocation(){if(!navigator.geolocation){setStatus('GEOLOCATION UNSUPPORTED');return}setStatus('LOCATING...');navigator.geolocation.getCurrentPosition(p=>{userLat=p.coords.latitude;userLon=p.coords.longitude; fetchClosestAirport(userLat, userLon);setStatus(`WATCHING ${userLat.toFixed(2)}, ${userLon.toFixed(2)}`);startPolling()},e=>setStatus('LOCATION DENIED - TRY ZIP'),{enableHighAccuracy:false,timeout:10000,maximumAge:60000})}
+async function useZip(z){z=String(z||'').trim();if(!/^\d{5}$/.test(z)){setStatus('ENTER A 5-DIGIT ZIP');return}setStatus(`LOOKING UP ${z}...`);try{const r=await fetch(`https://api.zippopotam.us/us/${z}`);if(!r.ok){setStatus('ZIP NOT FOUND');return}const d=await r.json();const pl=d.places?.[0];if(!pl){setStatus('ZIP NOT FOUND');return}userLat=parseFloat(pl.latitude);userLon=parseFloat(pl.longitude); fetchClosestAirport(userLat, userLon);setStatus(`WATCHING ${pl['place name'].toUpperCase()} ${z}`);startPolling()}catch(e){setStatus('ZIP LOOKUP FAILED')}}
 const aptInput = document.getElementById('apt-input');
 const aptGo = document.getElementById('apt-go');
 async function useAirport(code) {
@@ -229,7 +244,7 @@ async function useAirport(code) {
     const r = await fetch(`/api/airport/${code}`);
     if (!r.ok) { setStatus('AIRPORT NOT FOUND'); return; }
     const a = await r.json();
-    userLat = a.lat; userLon = a.lon;
+    userLat = a.lat; userLon = a.lon; fetchClosestAirport(userLat, userLon);
     setStatus(`WATCHING ${(a.iata||a.icao||code)} ${(a.name||'').toUpperCase()}`);
     startPolling();
   } catch (e) { setStatus('AIRPORT LOOKUP FAILED'); }
@@ -318,6 +333,28 @@ def airport(code):
         icao=a.get("icao_code") or "",
         name=a.get("name") or "",
         city=a.get("municipality") or "",
+    )
+
+
+
+
+@app.route("/api/closest-airport")
+def closest_airport():
+    try:
+        lat = float(request.args["lat"]); lon = float(request.args["lon"])
+    except (KeyError, ValueError):
+        return jsonify(error="lat and lon required"), 400
+    best, best_d = None, float("inf")
+    for rec in _AIRPORT_LIST:
+        d = haversine_km(lat, lon, rec["lat"], rec["lon"])
+        if d < best_d:
+            best_d, best = d, rec
+    if not best:
+        return jsonify(error="No airport found"), 404
+    return jsonify(
+        iata=best["iata"], icao=best["icao"],
+        name=best["name"], city=best["city"],
+        distance_km=round(best_d, 1),
     )
 
 
