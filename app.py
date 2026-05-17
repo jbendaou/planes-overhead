@@ -9,6 +9,7 @@ Open http://127.0.0.1:5000
 """
 
 import math
+import os
 import requests
 from flask import Flask, jsonify, render_template_string, request
 
@@ -23,7 +24,8 @@ MIN_RADIUS_KM = 5
 MAX_RADIUS_KM = 400
 EARTH_RADIUS_KM = 6371
 KM_PER_DEG_LAT = 111.0
-HTTP_TIMEOUT = 8
+HTTP_TIMEOUT = 25
+OPENSKY_AUTH = (os.environ["OPENSKY_USER"], os.environ["OPENSKY_PASS"]) if os.environ.get("OPENSKY_USER") else None
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -47,6 +49,7 @@ def fetch_nearby_states(lat, lon, radius_km):
         OPENSKY_URL,
         params={"lamin": lamin, "lomin": lomin, "lamax": lamax, "lomax": lomax},
         timeout=HTTP_TIMEOUT,
+        auth=OPENSKY_AUTH,
     )
     r.raise_for_status()
     return r.json().get("states") or []
