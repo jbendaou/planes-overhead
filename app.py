@@ -162,6 +162,11 @@ html,body{height:100%;background:#0a0a0a;color:#fff;font-family:'VT323',monospac
 <div class="status-bar"><span class="dot"></span><span id="status">LOCATING...</span></div>
 <div class="controls">
 <span class="ctl-group"><label>ZIP</label><input id="zip-input" type="text" maxlength="5" inputmode="numeric" placeholder="20431"><button id="zip-go" class="btn">GO</button><button id="use-location" class="btn">USE MY LOCATION</button></span>
+    <span class="ctl-group">
+      <label>AIRPORT</label>
+      <input id="apt-input" type="text" maxlength="4" placeholder="DCA">
+      <button id="apt-go" class="btn">GO</button>
+    </span>
 <span class="ctl-group"><label>RADIUS</label><select id="radius"><option value="10">10 KM</option><option value="25">25 KM</option><option value="50">50 KM</option><option value="75" selected>75 KM</option><option value="100">100 KM</option><option value="150">150 KM</option><option value="250">250 KM</option></select></span>
 <span class="ctl-group"><label>UNITS</label><button id="units-toggle" class="btn">KM</button></span>
 </div>
@@ -189,6 +194,24 @@ async function tick(){if(userLat==null)return;const r=radiusEl.value||75;try{con
 function startPolling(){if(timer)clearInterval(timer);tick();timer=setInterval(tick,REFRESH_MS)}
 function useBrowserLocation(){if(!navigator.geolocation){setStatus('GEOLOCATION UNSUPPORTED');return}setStatus('LOCATING...');navigator.geolocation.getCurrentPosition(p=>{userLat=p.coords.latitude;userLon=p.coords.longitude;setStatus(`WATCHING ${userLat.toFixed(2)}, ${userLon.toFixed(2)}`);startPolling()},e=>setStatus('LOCATION DENIED - TRY ZIP'),{enableHighAccuracy:false,timeout:10000,maximumAge:60000})}
 async function useZip(z){z=String(z||'').trim();if(!/^\d{5}$/.test(z)){setStatus('ENTER A 5-DIGIT ZIP');return}setStatus(`LOOKING UP ${z}...`);try{const r=await fetch(`https://api.zippopotam.us/us/${z}`);if(!r.ok){setStatus('ZIP NOT FOUND');return}const d=await r.json();const pl=d.places?.[0];if(!pl){setStatus('ZIP NOT FOUND');return}userLat=parseFloat(pl.latitude);userLon=parseFloat(pl.longitude);setStatus(`WATCHING ${pl['place name'].toUpperCase()} ${z}`);startPolling()}catch(e){setStatus('ZIP LOOKUP FAILED')}}
+const aptInput = document.getElementById('apt-input');
+const aptGo = document.getElementById('apt-go');
+async function useAirport(code) {
+  code = String(code||'').trim().toUpperCase();
+  if (!/^[A-Z]{3,4}$/.test(code)) { setStatus('ENTER 3 OR 4 LETTER AIRPORT CODE'); return; }
+  setStatus(`LOOKING UP ${code}...`);
+  try {
+    const r = await fetch(`/api/airport/${code}`);
+    if (!r.ok) { setStatus('AIRPORT NOT FOUND'); return; }
+    const a = await r.json();
+    userLat = a.lat; userLon = a.lon;
+    setStatus(`WATCHING ${(a.iata||a.icao||code)} ${(a.name||'').toUpperCase()}`);
+    startPolling();
+  } catch (e) { setStatus('AIRPORT LOOKUP FAILED'); }
+}
+aptGo.addEventListener('click', () => useAirport(aptInput.value));
+aptInput.addEventListener('keydown', e => { if (e.key === 'Enter') useAirport(aptInput.value); });
+
 zipGo.addEventListener('click',()=>useZip(zipInput.value));
 zipInput.addEventListener('keydown',e=>{if(e.key==='Enter')useZip(zipInput.value)});
 useLoc.addEventListener('click',useBrowserLocation);
@@ -239,6 +262,36 @@ def planes():
     airborne.sort(key=lambda a: haversine_km(lat, lon, a["lat"], a["lon"]))
     return jsonify(empty=False, nearby_count=len(airborne), radius_km=radius,
                    plane=build_plane_payload(airborne[0], lat, lon))
+
+
+
+
+def fetch_airport_by_code(code):
+    if not code:
+        return None
+    try:
+        r = requests.get(f"https://api.adsbdb.com/v0/airport/{code}",
+                         headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return None
+        resp = r.json().get("response") or {}
+        return resp.get("airport") or resp
+    except requests.RequestException:
+        return None
+
+
+@app.route("/api/airport/<code>")
+def airport(code):
+    a = fetch_airport_by_code(code.upper())
+    if not a or a.get("latitude") is None:
+        return jsonify(error="Airport not found"), 404
+    return jsonify(
+        lat=a["latitude"], lon=a["longitude"],
+        iata=a.get("iata_code") or "",
+        icao=a.get("icao_code") or "",
+        name=a.get("name") or "",
+        city=a.get("municipality") or "",
+    )
 
 
 if __name__ == "__main__":
